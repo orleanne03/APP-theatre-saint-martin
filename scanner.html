@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>🎟️ Scanner — Théâtre Saint Martin</title>
+
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<style>
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;padding:16px;text-align:center;background:linear-gradient(180deg,#f9f9f9,#e3f2fd)}
+  h1{color:#0d47a1;margin:6px 0}
+  #reader{width:320px;margin:12px auto;border-radius:10px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+  .panel{max-width:500px;margin:16px auto;background:#fff;padding:16px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.12);text-align:center}
+  .ok{color:#2e7d32;font-weight:700;margin:0}
+  .err{color:#d32f2f;font-weight:700;margin:0}
+  button{padding:10px 14px;border-radius:8px;border:none;color:#fff;cursor:pointer;margin:6px}
+  .violet{background:#8e24aa}.violet:hover{background:#6a1b9a}
+  .green{background:#2e7d32}.green:hover{background:#1b5e20}
+  #counter{font-weight:700;color:#0d47a1}
+  #details{margin-top:10px;text-align:left;font-size:15px;background:#f9f9f9;padding:10px;border-radius:8px;border:1px solid #ddd}
+  #newScanBtn{display:none;margin-top:10px;}
+  #resetScanBtn{background:#f57c00;}
+  #resetScanBtn:hover{background:#e65100;}
+  @media(max-width:420px){#reader{width:260px}}
+
+  /* Accordéon */
+  .accordion {
+    background-color:#1976d2;
+    color:white;
+    cursor:pointer;
+    padding:10px 16px;
+    width:100%;
+    border:none;
+    text-align:left;
+    outline:none;
+    font-size:16px;
+    border-radius:8px;
+    transition:background 0.2s;
+    max-width:500px;
+    margin:16px auto 0;
+  }
+  .accordion:hover{background-color:#0d47a1}
+  .panel-acc{
+    max-width:500px;
+    margin:0 auto 16px;
+    background:white;
+    display:none;
+    overflow:hidden;
+    border-radius:0 0 10px 10px;
+    box-shadow:0 2px 8px rgba(0,0,0,.12);
+  }
+  table{width:100%;border-collapse:collapse;font-size:14px;}
+  th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left;}
+  th{background:#f1f1f1;}
+  td .trash{cursor:pointer;color:#d32f2f;font-weight:bold;}
+  td .trash:hover{color:#b71c1c;}
+</style>
+</head>
+<body>
+  <h1>🎭 Théâtre Saint Martin — Scanner</h1>
+  <p>Alignez le QR dans le carré pour valider un billet.</p>
+
+  <div id="reader"></div>
+
+  <div class="panel">
+    <p id="status">Prêt à scanner.</p>
+    <p id="counter">Billets scannés : 0</p>
+    <div id="details" style="display:none;"></div>
+
+    <button id="newScanBtn" class="green">🎬 Nouveau scan</button>
+    <button id="resetScanBtn" class="violet">♻️ Réinitialiser</button>
+    <button id="gotoHome" class="violet">🏠 Tableau de bord</button>
+  </div>
+
+  <!-- Accordéon Historique -->
+  <button class="accordion">📜 Historique des scans</button>
+  <div class="panel-acc" id="historyPanel">
+    <table id="historyTable">
+      <thead>
+        <tr>
+          <th>Nom</th>
+          <th>Sièges</th>
+          <th>Date</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+<script>
+let scanner;
+let scanning = false;
+let lastScanText = "";
+let lastScanTime = 0;
+
+const statusEl = document.getElementById("status");
+const counterEl = document.getElementById("counter");
+const detailsEl = document.getElementById("details");
+const newScanBtn = document.getElementById("newScanBtn");
+
+function getScanned(){
+  return JSON.parse(localStorage.getItem("scannedTickets") || "[]");
+}
+function setScanned(list){
+  localStorage.setItem("scannedTickets", JSON.stringify(list));
+}
+function updateCounter(){
+  const scanned = getScanned();
+  counterEl.textContent = "Billets scannés : " + scanned.length;
+}
+
+async function startScanner(){
+  if (scanning) return;
+  scanning = true;
+  scanner = new Html5Qrcode("reader");
+
+  const config = {
+    fps: 10,
+    qrbox: (vw, vh) => {
+      const minEdge = Math.min(vw, vh);
+      const size = Math.floor(minEdge * 0.8);
+      return { width: size, height: size };
+    }
+  };
+
+  try {
+    await scanner.start({ facingMode: "environment" }, config, onScanSuccess, () => {});
+    updateCounter();
+    newScanBtn.style.display = "none";
+  } catch (err) {
+    statusEl.innerHTML = "<span class='err'>Impossible d'accéder à la caméra : "+err+"</span>";
+  }
+}
+
+async function stopScanner(){
+  if (!scanner) return;
+  try {
+    await scanner.stop();
+    scanning = false;
+  } catch(e){ console.error(e); }
+}
+
+function safeDecode(str){
+  try {
+    if (/%[0-9A-Fa-f]{2}/.test(str)) return decodeURIComponent(str);
+  } catch(e){}
+  return str;
+}
+
+async function onScanSuccess(text){
+  const now = Date.now();
+  if (text === lastScanText && now - lastScanTime < 3000) return;
+  lastScanText = text; lastScanTime = now;
+
+  await stopScanner();
+
+  let scanned = getScanned();
+  const already = scanned.some(s=>s.text===text);
+
+  const decoded = safeDecode(text);
+  let data = null;
+  try { data = JSON.parse(decoded); } catch(e){ data = null; }
+
+  if (already) {
+    statusEl.innerHTML = "<span class='err'>⚠️ Billet déjà validé</span>";
+    flash("red");
+  } else {
+    const entry = {
+      text,
+      nom: data?.nom || "(non précisé)",
+      sieges: data?.sieges || "(inconnu)",
+      date: new Date().toLocaleString()
+    };
+    scanned.push(entry);
+    setScanned(scanned);
+    updateCounter();
+    renderHistory();
+    statusEl.innerHTML = "<span class='ok'>✅ Billet lu avec succès</span>";
+    flash("lime");
+  }
+
+  if (data && typeof data === "object") {
+    detailsEl.style.display = "block";
+    detailsEl.innerHTML = `
+      <strong>Nom :</strong> ${data.nom || "(non précisé)"}<br>
+      <strong>Email :</strong> ${data.email || "(non précisé)"}<br>
+      <strong>Téléphone :</strong> ${data.tel || "(non précisé)"}<br>
+      <strong>Sièges :</strong> ${data.sieges || "(inconnu)"}
+    `;
+  } else {
+    detailsEl.style.display = "block";
+    detailsEl.innerHTML = "<em>Format inconnu — aucune donnée exploitable trouvée.</em>";
+  }
+
+  setTimeout(() => {
+    newScanBtn.style.display = "inline-block";
+    statusEl.textContent = "Prêt pour un nouveau scan.";
+  }, 5000);
+}
+
+function flash(color) {
+  const overlay = document.createElement("div");
+  Object.assign(overlay.style, {
+    position:"fixed", inset:"0", background:color, opacity:"0.25", zIndex:"99",
+  });
+  document.body.append(overlay);
+  setTimeout(() => overlay.remove(), 150);
+}
+
+newScanBtn.onclick = () => {
+  detailsEl.style.display = "none";
+  statusEl.textContent = "Prêt à scanner.";
+  newScanBtn.style.display = "none";
+  startScanner();
+};
+
+document.getElementById("gotoHome").onclick = ()=>{ window.location.href = "index.html"; };
+
+const resetScanBtn = document.getElementById("resetScanBtn");
+if (resetScanBtn) {
+  resetScanBtn.onclick = () => {
+    const pwd = prompt("🔐 Entrez le mot de passe administrateur pour réinitialiser :");
+    if (pwd === "admin123") {
+      if (confirm("Voulez-vous vraiment effacer tous les billets scannés ?")) {
+        localStorage.removeItem("scannedTickets");
+        updateCounter();
+        detailsEl.style.display = "none";
+        statusEl.innerHTML = "<span class='ok'>✅ Liste des scans réinitialisée.</span>";
+        newScanBtn.style.display = "none";
+        flash("lime");
+
+        // 🧹 Vide le tableau immédiatement
+        renderHistory();
+      }
+    } else if (pwd !== null) {
+      alert("❌ Mot de passe incorrect.");
+      flash("red");
+    }
+  };
+}
+
+
+// === Historique ===
+const historyPanel = document.getElementById("historyPanel");
+const historyTable = document.getElementById("historyTable").querySelector("tbody");
+
+function renderHistory(){
+  const list = getScanned();
+  historyTable.innerHTML = "";
+  list.forEach((item,i)=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${item.nom}</td>
+      <td>${item.sieges}</td>
+      <td>${item.date}</td>
+      <td><span class="trash" data-i="${i}">🗑️</span></td>
+    `;
+    historyTable.append(tr);
+  });
+
+  // gestion corbeille
+  historyTable.querySelectorAll(".trash").forEach(btn=>{
+    btn.onclick = ()=>{
+      const idx = parseInt(btn.dataset.i);
+      const list = getScanned();
+      list.splice(idx,1);
+      setScanned(list);
+      updateCounter();
+      renderHistory();
+    };
+  });
+}
+
+// Accordéon
+document.querySelector(".accordion").addEventListener("click", function(){
+  this.classList.toggle("active");
+  historyPanel.style.display = (historyPanel.style.display === "block") ? "none" : "block";
+});
+
+window.addEventListener("load", ()=>{
+  startScanner();
+  renderHistory();
+});
+</script>
+</body>
+</html>

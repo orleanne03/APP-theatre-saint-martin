@@ -1,0 +1,15 @@
+{
+    "name": "Théâtre Saint-Martin",
+    "short_name": "St-Martin",
+    "description": "Application de réservation du Théâtre Saint-Martin – Salle de Bessay 🎭",
+    "start_url": "./accueil.html",
+    "display": "standalone",
+    "background_color": "#fff8e1",
+    "theme_color": "#d32f2f",
+    "orientation": "portrait",
+    "icons": [
+      { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+      { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+    ]
+  }
+  
